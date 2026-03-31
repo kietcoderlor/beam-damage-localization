@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beam-damage-localization"
+version = "0.1.0"
+description = "Research project for multi-damage localization in beam structures"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "openpyxl",
+    "xgboost",
+    "matplotlib",
+    "pywavelets"
+]
+
+[tool.setuptools]
+packages = ["src"]
