@@ -16,7 +16,11 @@ class RfBaselineConfig:
     random_state: int = 42
     n_estimators: int = 600
     max_depth: int | None = None
+    max_features: str | float | int | None = "sqrt"
+    min_samples_split: int = 2
     min_samples_leaf: int = 1
+    bootstrap: bool = True
+    class_weight: str | dict[int, float] | None = "balanced_subsample"
     n_jobs: int = -1
 
 
@@ -33,16 +37,22 @@ class RfDamageBaseline:
         self.num_damages_clf = RandomForestClassifier(
             n_estimators=self.cfg.n_estimators,
             max_depth=self.cfg.max_depth,
+            max_features=self.cfg.max_features,
+            min_samples_split=self.cfg.min_samples_split,
             min_samples_leaf=self.cfg.min_samples_leaf,
+            bootstrap=self.cfg.bootstrap,
             random_state=self.cfg.random_state,
             n_jobs=self.cfg.n_jobs,
-            class_weight="balanced_subsample",
+            class_weight=self.cfg.class_weight,
         )
 
         base_reg = RandomForestRegressor(
             n_estimators=self.cfg.n_estimators,
             max_depth=self.cfg.max_depth,
+            max_features=self.cfg.max_features,
+            min_samples_split=self.cfg.min_samples_split,
             min_samples_leaf=self.cfg.min_samples_leaf,
+            bootstrap=self.cfg.bootstrap,
             random_state=self.cfg.random_state,
             n_jobs=self.cfg.n_jobs,
         )

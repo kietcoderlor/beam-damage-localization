@@ -63,6 +63,7 @@ class XgbDamageBaseline:
         self.pos_reg = MultiOutputRegressor(base_reg)
 
         self._is_fit = False
+        self._class_values: np.ndarray | None = None  # original labels (e.g., [0,1,2,4])
 
     def fit(
         self,
@@ -71,7 +72,26 @@ class XgbDamageBaseline:
         X_val: pd.DataFrame | None = None,
         y_val: pd.DataFrame | None = None,
     ) -> None:
-        y_num = y_train["num_damages"].astype(int).to_numpy()
+        y_num_raw_train = y_train["num_damages"].astype(int).to_numpy()
+        y_num_raw_val = None
+        if X_val is not None and y_val is not None:
+            y_num_raw_val = y_val["num_damages"].astype(int).to_numpy()
+
+        # XGBoost classifier (multi) expects consistent class set across train/val.
+        # Our labels are not guaranteed to be continuous (may be [0,1,2,4] etc),
+        # so we remap them to contiguous indices for training.
+        if y_num_raw_val is None:
+            class_values = np.unique(y_num_raw_train)
+        else:
+            class_values = np.unique(np.concatenate([y_num_raw_train, y_num_raw_val]))
+        self._class_values = class_values
+
+        # Since class_values is sorted, we can use searchsorted for mapping.
+        y_num_train_enc = np.searchsorted(class_values, y_num_raw_train).astype(int)
+        y_num_val_enc = None
+        if y_num_raw_val is not None:
+            y_num_val_enc = np.searchsorted(class_values, y_num_raw_val).astype(int)
+
         y_pos = y_train[POSITION_COLS].astype(float).to_numpy()
 
         # Fill missing position slots with -1 for training stability.
@@ -79,15 +99,14 @@ class XgbDamageBaseline:
         y_pos_filled = np.where(np.isfinite(y_pos), y_pos, -1.0)
 
         if X_val is not None and y_val is not None:
-            y_num_val = y_val["num_damages"].astype(int).to_numpy()
             self.num_damages_clf.fit(
                 X_train.to_numpy(),
-                y_num,
-                eval_set=[(X_val.to_numpy(), y_num_val)],
+                y_num_train_enc,
+                eval_set=[(X_val.to_numpy(), y_num_val_enc)],
                 verbose=False,
             )
         else:
-            self.num_damages_clf.fit(X_train.to_numpy(), y_num, verbose=False)
+            self.num_damages_clf.fit(X_train.to_numpy(), y_num_train_enc, verbose=False)
 
         self.pos_reg.fit(X_train.to_numpy(), y_pos_filled)
         self._is_fit = True
@@ -95,7 +114,11 @@ class XgbDamageBaseline:
     def predict_num_damages(self, X: pd.DataFrame) -> np.ndarray:
         if not self._is_fit:
             raise RuntimeError("Model is not fit yet.")
-        return self.num_damages_clf.predict(X.to_numpy()).astype(int)
+        if self._class_values is None:
+            raise RuntimeError("Internal class mapping is missing.")
+        pred_enc = self.num_damages_clf.predict(X.to_numpy()).astype(int)
+        # Map back to original labels.
+        return self._class_values[pred_enc]
 
     def predict_positions(self, X: pd.DataFrame) -> pd.DataFrame:
         if not self._is_fit:
