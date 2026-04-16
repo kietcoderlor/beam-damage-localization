@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -8,12 +9,31 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+def _find_project_root() -> Path:
+    current = Path(__file__).resolve()
+    for candidate in [current.parent, *current.parents]:
+        if (candidate / "src").exists():
+            return candidate
+    raise RuntimeError("Could not locate project root.")
+
+
+PROJECT_ROOT = _find_project_root()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config.settings import OUTPUT_DIR, PROCESSED_DIR  # noqa: E402
-from src.features.baseline_features import build_baseline_feature_matrix  # noqa: E402
+from src.features.baseline_features import (  # noqa: E402
+    BaselineFeatureConfig,
+    build_baseline_feature_matrix,
+)
+from src.features.physics_features import (  # noqa: E402
+    PhysicsFeatureConfig,
+    build_physics_feature_matrix,
+)
+from src.features.wavelet_features import (  # noqa: E402
+    WaveletFeatureConfig,
+    build_wavelet_feature_matrix,
+)
 from src.models.baseline_sklearn import POSITION_COLS  # noqa: E402
 
 
@@ -29,20 +49,54 @@ def _print_ascii_safe(text: str) -> None:
     print(text.encode("ascii", errors="replace").decode("ascii"))
 
 
+def _build_features(df: pd.DataFrame, artifact: dict) -> pd.DataFrame:
+    feature_builder = artifact.get("feature_builder", "baseline")
+    feature_columns = artifact.get("feature_columns")
+
+    if feature_builder == "baseline":
+        feat_cfg = artifact["feature_config"]
+        X = build_baseline_feature_matrix(df, feat_cfg)
+    elif feature_builder == "cnn_raw_modal":
+        X = df.copy()
+    elif feature_builder == "baseline+wavelet+physics":
+        feat_cfg = artifact["feature_config"]
+        baseline_cfg = feat_cfg["baseline_config"]
+        wavelet_cfg = feat_cfg["wavelet_config"]
+        physics_cfg = feat_cfg["physics_config"]
+
+        X_baseline = build_baseline_feature_matrix(df, BaselineFeatureConfig(**baseline_cfg))
+        X_wavelet = build_wavelet_feature_matrix(df, WaveletFeatureConfig(**wavelet_cfg))
+        X_physics = build_physics_feature_matrix(df, PhysicsFeatureConfig(**physics_cfg))
+
+        freq_cols = [c for c in X_baseline.columns if c.startswith("freq_mode_")]
+        X_wavelet = X_wavelet.drop(columns=[c for c in freq_cols if c in X_wavelet.columns], errors="ignore")
+        X_physics = X_physics.drop(columns=[c for c in freq_cols if c in X_physics.columns], errors="ignore")
+        X = pd.concat([X_baseline, X_wavelet, X_physics], axis=1)
+    else:
+        raise ValueError(f"Unsupported feature_builder: {feature_builder}")
+
+    if feature_columns is not None:
+        X = X[feature_columns]
+    return X
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-name", type=str, default="baseline_rf", help="Subdirectory in outputs/ to load artifact.joblib from.")
+    args = parser.parse_args()
+
     split_path = PROCESSED_DIR / "test.csv"
-    artifact_path = OUTPUT_DIR / "baseline_rf" / "artifact.joblib"
-    out_dir = OUTPUT_DIR / "baseline_rf"
+    artifact_path = OUTPUT_DIR / args.run_name / "artifact.joblib"
+    out_dir = OUTPUT_DIR / args.run_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
     test_df = pd.read_csv(split_path)
     test_df = test_df[test_df["num_modes_found"] == 4].copy().reset_index(drop=True)
 
     artifact = joblib.load(artifact_path)
-    feat_cfg = artifact["feature_config"]
     model = artifact["model"]
 
-    X_test = build_baseline_feature_matrix(test_df, feat_cfg)
+    X_test = _build_features(test_df, artifact)
     y_num_true = test_df["num_damages"].astype(int).to_numpy()
     y_pos_true = test_df[POSITION_COLS].astype(float)
 

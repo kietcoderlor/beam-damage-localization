@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import argparse
+import sys
+from dataclasses import asdict
 from pathlib import Path
 
 import joblib
 import pandas as pd
 
-import sys
-from pathlib import Path
+def _find_project_root() -> Path:
+    current = Path(__file__).resolve()
+    for candidate in [current.parent, *current.parents]:
+        if (candidate / "src").exists():
+            return candidate
+    raise RuntimeError("Could not locate project root.")
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+PROJECT_ROOT = _find_project_root()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -19,7 +27,10 @@ from src.features.baseline_features import (  # noqa: E402
     BaselineFeatureConfig,
     build_baseline_feature_matrix,
 )
-from src.models.baseline_sklearn import RfBaselineConfig, RfDamageBaseline  # noqa: E402
+from src.models.baseline_xgb import (  # noqa: E402
+    XgbBaselineConfig,
+    XgbDamageBaseline,
+)
 
 
 TARGET_COLS = ["num_damages", "damage_pos_1", "damage_pos_2", "damage_pos_3", "damage_pos_4"]
@@ -28,11 +39,26 @@ TARGET_COLS = ["num_damages", "damage_pos_1", "damage_pos_2", "damage_pos_3", "d
 def _load_split(name: str) -> pd.DataFrame:
     path = PROCESSED_DIR / f"{name}.csv"
     df = pd.read_csv(path)
+    # chỉ giữ các sample đủ 4 mode (bộ baseline hiện đang làm như vậy)
     df = df[df["num_modes_found"] == 4].copy().reset_index(drop=True)
     return df
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output-name", type=str, default="baseline_xgb")
+
+    # Hyperparams (có default theo dataclass)
+    parser.add_argument("--n-estimators", type=int, default=600)
+    parser.add_argument("--learning-rate", type=float, default=0.05)
+    parser.add_argument("--max-depth", type=int, default=6)
+    parser.add_argument("--subsample", type=float, default=0.9)
+    parser.add_argument("--colsample-bytree", type=float, default=0.9)
+    parser.add_argument("--reg-lambda", type=float, default=1.0)
+    parser.add_argument("--tree-method", type=str, default="hist")
+
+    args = parser.parse_args()
+
     train_df = _load_split("train")
     val_df = _load_split("val")
     test_df = _load_split("test")
@@ -57,9 +83,19 @@ def main() -> None:
     y_val = val_df[TARGET_COLS].copy()
     y_test = test_df[TARGET_COLS].copy()
 
-    # Model (no extra deps)
-    model = RfDamageBaseline(RfBaselineConfig(random_state=RANDOM_SEED))
-    model.fit(X_train, y_train)
+    cfg = XgbBaselineConfig(
+        random_state=RANDOM_SEED,
+        n_estimators=args.n_estimators,
+        learning_rate=args.learning_rate,
+        max_depth=args.max_depth,
+        subsample=args.subsample,
+        colsample_bytree=args.colsample_bytree,
+        reg_lambda=args.reg_lambda,
+        tree_method=args.tree_method,
+    )
+
+    model = XgbDamageBaseline(cfg)
+    model.fit(X_train, y_train, X_val=X_val, y_val=y_val)
 
     def eval_split(name: str, X: pd.DataFrame, y: pd.DataFrame) -> None:
         y_num_true = y["num_damages"].astype(int).to_numpy()
@@ -78,19 +114,18 @@ def main() -> None:
     eval_split("TEST", X_test, y_test)
 
     # Save artifacts
-    out_dir = OUTPUT_DIR / "baseline_rf"
+    out_dir = OUTPUT_DIR / args.output_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
     joblib.dump(
         {
             "feature_config": feat_cfg,
-            "model_config": model.cfg,
+            "model_config": asdict(cfg),
             "model": model,
             "feature_columns": X_train.columns.tolist(),
         },
         out_dir / "artifact.joblib",
     )
-
     print(f"\nSaved artifact to: {out_dir / 'artifact.joblib'}")
 
 

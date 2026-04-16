@@ -29,10 +29,10 @@ pip install -e .
 ### 2) Run pipeline
 
 ```bash
-python scripts/01_build_dataset.py
-python scripts/02_split_dataset.py
-python scripts/03_train_baseline.py
-python scripts/04_error_analysis.py
+python scripts/data/01_build_dataset.py
+python scripts/data/02_split_dataset.py
+python scripts/train/03_train_baseline.py
+python scripts/analysis/04_error_analysis.py
 ```
 
 ## Data convention (important)
