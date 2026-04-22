@@ -70,3 +70,4 @@ python scripts/04_error_analysis.py
 - The current dataset includes classes: `0`, `1`, `2`, and `4` damages.
 - Class `0` is very rare, so split logic handles rare-class safety explicitly.
 - If metrics look unusually high, check leakage first.
+  .
