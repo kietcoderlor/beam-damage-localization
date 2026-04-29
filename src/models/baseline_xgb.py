@@ -64,6 +64,32 @@ class XgbDamageBaseline:
 
         self._is_fit = False
         self._class_values: np.ndarray | None = None  # original labels (e.g., [0,1,2,4])
+        self._class_pos_reg: dict[int, MultiOutputRegressor] = {}
+        self._valid_position_values: np.ndarray | None = None
+
+    def _make_pos_regressor(self) -> MultiOutputRegressor:
+        base_reg = XGBRegressor(
+            n_estimators=self.cfg.n_estimators,
+            learning_rate=self.cfg.learning_rate,
+            max_depth=self.cfg.max_depth,
+            subsample=self.cfg.subsample,
+            colsample_bytree=self.cfg.colsample_bytree,
+            reg_lambda=self.cfg.reg_lambda,
+            random_state=self.cfg.random_state,
+            tree_method=self.cfg.tree_method,
+            n_jobs=0,
+            objective="reg:squarederror",
+        )
+        return MultiOutputRegressor(base_reg)
+
+    @staticmethod
+    def _snap_to_grid(values: np.ndarray, grid: np.ndarray) -> np.ndarray:
+        if grid.size == 0:
+            return values
+        snapped = values.copy()
+        for i, v in enumerate(values):
+            snapped[i] = float(grid[np.argmin(np.abs(grid - v))])
+        return snapped
 
     def fit(
         self,
@@ -93,6 +119,11 @@ class XgbDamageBaseline:
             y_num_val_enc = np.searchsorted(class_values, y_num_raw_val).astype(int)
 
         y_pos = y_train[POSITION_COLS].astype(float).to_numpy()
+        finite_positions = y_pos[np.isfinite(y_pos)]
+        if finite_positions.size > 0:
+            self._valid_position_values = np.unique(np.asarray(finite_positions, dtype=float))
+        else:
+            self._valid_position_values = None
 
         # Fill missing position slots with -1 for training stability.
         # NOTE: evaluation still masks by true NaNs; this is just a training convenience.
@@ -109,6 +140,19 @@ class XgbDamageBaseline:
             self.num_damages_clf.fit(X_train.to_numpy(), y_num_train_enc, verbose=False)
 
         self.pos_reg.fit(X_train.to_numpy(), y_pos_filled)
+
+        # Mixture-of-experts: class-conditional position regressors.
+        # This helps each regressor focus on topology of a specific damage-count class.
+        self._class_pos_reg = {}
+        for cls in np.unique(y_num_raw_train):
+            cls_mask = y_num_raw_train == cls
+            # Keep a minimal support threshold to avoid unstable overfitting on tiny classes.
+            if int(np.sum(cls_mask)) < 3:
+                continue
+            reg = self._make_pos_regressor()
+            reg.fit(X_train.to_numpy()[cls_mask], y_pos_filled[cls_mask])
+            self._class_pos_reg[int(cls)] = reg
+
         self._is_fit = True
 
     def predict_num_damages(self, X: pd.DataFrame) -> np.ndarray:
@@ -120,10 +164,47 @@ class XgbDamageBaseline:
         # Map back to original labels.
         return self._class_values[pred_enc]
 
-    def predict_positions(self, X: pd.DataFrame) -> pd.DataFrame:
+    def predict_positions(
+        self,
+        X: pd.DataFrame,
+        y_num_pred: np.ndarray | None = None,
+    ) -> pd.DataFrame:
         if not self._is_fit:
             raise RuntimeError("Model is not fit yet.")
-        pred = self.pos_reg.predict(X.to_numpy())
-        pred_df = pd.DataFrame(pred, columns=POSITION_COLS)
+        x_np = X.to_numpy()
+        if y_num_pred is None:
+            y_num_pred = self.predict_num_damages(X)
+        y_num_pred = np.asarray(y_num_pred, dtype=int)
+
+        # Default to global regressor and selectively replace with class-specific experts.
+        pred = self.pos_reg.predict(x_np)
+        for cls, reg in self._class_pos_reg.items():
+            cls_mask = y_num_pred == cls
+            if not np.any(cls_mask):
+                continue
+            pred[cls_mask] = reg.predict(x_np[cls_mask])
+
+        # Physics-aware post-processing:
+        # - clip invalid negatives (except sentinel -1)
+        # - enforce sorted positions
+        # - optional snap to known valid position grid
+        processed = np.asarray(pred, dtype=float)
+        for i in range(processed.shape[0]):
+            row = processed[i]
+            row = np.where(row < 0.0, -1.0, row)
+            valid_mask = row >= 0.0
+            if np.any(valid_mask):
+                valid_vals = np.sort(row[valid_mask])
+                if self._valid_position_values is not None:
+                    valid_vals = self._snap_to_grid(valid_vals, self._valid_position_values)
+                k = int(min(max(y_num_pred[i], 0), len(valid_vals)))
+                row_out = np.full_like(row, np.nan, dtype=float)
+                if k > 0:
+                    row_out[:k] = valid_vals[:k]
+                processed[i] = row_out
+            else:
+                processed[i] = np.full_like(row, np.nan, dtype=float)
+
+        pred_df = pd.DataFrame(processed, columns=POSITION_COLS)
         return pred_df
 
