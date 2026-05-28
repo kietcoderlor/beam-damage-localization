@@ -40,36 +40,17 @@ Current class distribution includes:
 
 So do not assume only up to 3 damage locations.
 
-## Critical rules
-- Never split by raw mode row.
-- Never introduce train/test leakage.
-- Prefer baseline-first development.
-- Keep scripts thin and logic in `src/`.
-- If changing data logic, print inspection outputs.
-- If metrics look suspiciously high, check leakage first.
+## Critical rules and coding standards
 
-## Coding preferences
-- Use clean Python.
-- Use small functions.
-- Use explicit names.
-- Add type hints where useful.
-- Avoid unnecessary complexity.
-- Keep everything reproducible.
+See `docs/CODE_RULES.md` for the full list. Key points:
+- Never split by raw mode row — always by `config_id`
+- If metrics look suspiciously high, check leakage first
+- Baseline-first: verify data → verify split → baseline → evaluate → advanced
 
-## What to optimize for
-- clarity
-- correctness
-- reproducibility
-- low leakage risk
-- research usefulness
+## Current pipeline status
 
-## Current immediate development priority
-Build the next stage of the pipeline safely:
-1. inspect dataset integrity
-2. parse mode vectors from JSON
-3. create baseline feature matrix
-4. build first baseline model
-5. evaluate properly on train/val/test
+Pipeline is complete through Phase 4. Best model: `xgb_advanced_moe_postprocess`.
+See `docs/pipeline.md` for phase status and `docs/MODEL_COMPARISON.md` for results.
 
 ## Response style
 When proposing code changes:

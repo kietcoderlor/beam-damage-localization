@@ -12,9 +12,10 @@ Research codebase for multi-damage localization in beam structures using modal f
 
 ## Current status
 
-- End-to-end baseline pipeline is runnable
-- Baseline artifact is saved in `outputs/baseline_rf/artifact.joblib`
-- Evaluation and analysis reports are saved in `outputs/baseline_rf/`
+- Full research pipeline is runnable end-to-end (data → features → train → evaluate)
+- Multiple model families trained and evaluated: RandomForest, XGBoost, MLP, CNN1D
+- Best model: `xgb_advanced_moe_postprocess` — `acc=0.9615`, `f1_macro=0.9653`, `pos_mae=0.1217`
+- See `docs/MODEL_COMPARISON.md` for full model ranking and `docs/KEEP_TRACK.md` for experiment history
 
 ## Quick start
 
@@ -65,9 +66,20 @@ python scripts/analysis/04_error_analysis.py
 - `outputs/baseline_rf/test_position_error_by_class.csv`
 - `outputs/baseline_rf/test_top15_position_errors.csv`
 
+## Dataset columns
+
+Key metadata per row (one row = one full damage configuration):
+
+- `config_id`, `scenario_name`, `num_damages`, `damage_severity`, `num_modes_found`
+- `damage_pos_1`, `damage_pos_2`, `damage_pos_3`, `damage_pos_4`
+
+Modal features:
+
+- `freq_mode_1` .. `freq_mode_4`
+- `mode_1_vector_json` .. `mode_4_vector_json` (mode shape vectors, 191 dims each, stored as JSON string)
+
 ## Notes
 
-- The current dataset includes classes: `0`, `1`, `2`, and `4` damages.
+- The current dataset includes classes: `0`, `1`, `2`, and `4` damages (no class `3`).
 - Class `0` is very rare, so split logic handles rare-class safety explicitly.
 - If metrics look unusually high, check leakage first.
-  .
