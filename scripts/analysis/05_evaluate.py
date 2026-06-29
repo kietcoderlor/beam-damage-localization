@@ -54,6 +54,7 @@ def _as_metrics_dict(m) -> dict:
         "pos_rmse_overall": m.pos_rmse_overall,
         "pos_mae_per_slot": m.pos_mae_per_slot,
         "pos_rmse_per_slot": m.pos_rmse_per_slot,
+        "num_damages_per_class_report": m.num_damages_per_class_report,
     }
 
 
@@ -105,6 +106,8 @@ def evaluate_split(title: str, model, X: pd.DataFrame, y: pd.DataFrame) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-name", type=str, default="baseline_rf")
+    parser.add_argument("--test-csv", type=str, default="test.csv",
+                        help="Test split filename in data/processed/ (default: test.csv)")
     args = parser.parse_args()
 
     run_dir = OUTPUT_DIR / args.run_name
@@ -115,7 +118,8 @@ def main() -> None:
 
     train_df = _load_split("train")
     val_df = _load_split("val")
-    test_df = _load_split("test")
+    test_name = args.test_csv.removesuffix(".csv")
+    test_df = _load_split(test_name)
 
     X_train = _build_features(train_df, artifact)
     X_val = _build_features(val_df, artifact)

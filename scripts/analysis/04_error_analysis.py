@@ -123,6 +123,7 @@ def main() -> None:
     pos_pred_np = y_pos_pred[POSITION_COLS].to_numpy()
 
     rows = []
+    pred_rows = []
     for idx in range(len(test_df)):
         mae_row = _masked_row_pos_mae(pos_true_np[idx], pos_pred_np[idx])
         rows.append(
@@ -135,7 +136,22 @@ def main() -> None:
                 "position_mae_masked": mae_row,
             }
         )
+        pred_row: dict = {
+            "config_id": test_df.loc[idx, "config_id"],
+            "scenario_name": test_df.loc[idx, "scenario_name"],
+            "num_damages_true": int(y_num_true[idx]),
+            "num_damages_pred": int(y_num_pred[idx]),
+            "num_damages_correct": int(y_num_true[idx] == y_num_pred[idx]),
+        }
+        for col_i, col in enumerate(POSITION_COLS):
+            pred_row[f"{col}_true"] = pos_true_np[idx, col_i]
+            pred_row[f"{col}_pred"] = pos_pred_np[idx, col_i]
+        pred_row["position_mae_masked"] = mae_row
+        pred_rows.append(pred_row)
     err_df = pd.DataFrame(rows)
+    pred_df = pd.DataFrame(pred_rows)
+    pred_df.to_csv(out_dir / "test_predictions.csv", index=False, encoding="utf-8-sig")
+    print(f"\nSaved raw predictions to: {out_dir / 'test_predictions.csv'}")
 
     print("\n=== Position MAE by true num_damages (TEST) ===")
     by_cls = (
@@ -152,6 +168,7 @@ def main() -> None:
     top_err.to_csv(out_dir / "test_top15_position_errors.csv", index=False, encoding="utf-8-sig")
 
     print("\nSaved analysis files:")
+    print(f" - {out_dir / 'test_predictions.csv'}")
     print(f" - {out_dir / 'test_confusion_matrix.csv'}")
     print(f" - {out_dir / 'test_classification_report.txt'}")
     print(f" - {out_dir / 'test_position_error_by_class.csv'}")

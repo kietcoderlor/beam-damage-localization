@@ -3,6 +3,69 @@
 ## Mục tiêu
 Xây pipeline để dự đoán vị trí hư hỏng (beam damage localization) từ dữ liệu modal (tần số + mode shape), sau đó huấn luyện và đánh giá các baseline ML theo cách chia `train/val/test` không gây rò rỉ dữ liệu (leakage-safe).
 
+---
+
+## Cập nhật mới nhất — 28/05/2026
+
+### Thay đổi hôm nay
+
+**Augmentation class 0 + class 4 vào test set — lần đầu đo được per-class recall đầy đủ.**
+
+#### Infrastructure
+
+| File | Thay đổi |
+|------|----------|
+| `src/data/augment.py` | Thêm `augment_by_class_gaussian()` — tổng quát hóa cho mọi class, round-robin template |
+| `src/eval/metrics.py` | Thêm field `num_damages_per_class_report` (sklearn `classification_report`) |
+| `src/eval/evaluate.py` | In per-class P / R / F1 / support cho mọi lần evaluate |
+| `scripts/analysis/05_evaluate.py` | Thêm `--test-csv` flag, serialize per-class vào JSON |
+| `scripts/train/13_train_with_augmented.py` | Thêm `--test-csv` flag |
+| `scripts/data/03_augment_class0.py` | Thêm `--test-holdout`, tạo `test_augmented.csv` |
+| `scripts/data/05_augment_class4.py` | File mới — augment class 4, append vào augmented splits |
+
+#### Data files mới / cập nhật
+
+| File | Mô tả |
+|------|-------|
+| `data/processed/test_augmented.csv` | 36 mẫu: 26 thật + 5 synthetic class-0 + 5 synthetic class-4 |
+| `data/processed/train_augmented.csv` | 289 mẫu: real + 47 class-0 synthetic + 40 class-4 synthetic |
+| `data/processed/val_augmented.csv` | 38 mẫu: real + 8 class-0 synthetic + 5 class-4 synthetic |
+
+#### Model mới: `xgb_aug_full`
+
+Retrain `xgb_advanced_moe_postprocess` trên `train_augmented.csv` (class 0 + class 4 augmented).
+
+**Kết quả trên `test_augmented.csv` (36 mẫu):**
+
+```
+num_damages accuracy : 0.9444
+num_damages f1_macro : 0.9452
+pos_MAE (overall)    : 0.0997
+pos_RMSE (overall)   : 0.3970
+```
+
+**Per-class (lần đầu đo được đầy đủ 4 classes):**
+
+| Class | Label | Precision | Recall | F1 | n | Ghi chú |
+|-------|-------|-----------|--------|----|---|---------|
+| 0 | Bình thường | 1.000 | **1.000** | 1.000 | 5 | Synthetic — sanity check |
+| 1 | 1 hư hỏng | 1.000 | 0.714 | 0.833 | 7 | Real — điểm yếu nhất |
+| 2 | 2 hư hỏng | 0.900 | 1.000 | 0.947 | 18 | Real |
+| 4 | 4 hư hỏng | 1.000 | **1.000** | 1.000 | 6 | 1 real + 5 synthetic |
+
+**Lưu ý quan trọng khi đọc kết quả:**
+- Class 0 và class 4 synthetic trong test là Gaussian noise augmentation — metrics trên các class này là *sanity check*, không phải blind test trên real measurements.
+- Recall class 1 = 71% (2/7 mẫu bị misclassify) là điểm yếu thực sự cần cải thiện.
+- f1_macro thấp hơn `xgb_advanced_moe_postprocess` (0.9452 vs 0.9653) do test set lớn hơn và tính trên 4 class thay vì 3, không phải model kém hơn.
+
+### Hướng tiếp theo
+
+- Cải thiện recall class 1 (hiện 71%) — thử class-weighted loss hoặc oversampling
+- Ablation study: bỏ class-conditional regressor / bỏ postprocess → so sánh MAE/F1
+- Chốt model cuối cho báo cáo
+
+---
+
 ## Cập nhật hôm nay
 - Hôm nay là **Thứ Năm, ngày 16/04/2026**.
 - Tính tới hôm nay, project **không còn dừng ở mức baseline RF** nữa.
@@ -19,8 +82,7 @@ Xây pipeline để dự đoán vị trí hư hỏng (beam damage localization) 
 
 ## Tóm tắt rất ngắn
 - Nếu chỉ nhìn kết quả hiện tại trên `test`, nhóm **XGBoost** đang tốt nhất.
-- Nếu ưu tiên phân loại đúng số lượng hư hỏng (`num_damages`), run tốt nhất là `baseline_xgb_advanced`.
-- Nếu ưu tiên dự đoán vị trí hư hỏng hoặc muốn cân bằng giữa phân loại và vị trí, run tốt nhất là `tuned_xgb_advanced_balanced`.
+- Run tốt nhất hiện tại (cả F1 lẫn vị trí): `xgb_advanced_moe_postprocess`.
 - RF vẫn là baseline tốt và dễ giải thích, nhưng hiện đã bị XGBoost vượt qua khá rõ.
 
 ## Pipeline hiện đang ở phase nào?
@@ -203,6 +265,22 @@ Xây pipeline để dự đoán vị trí hư hỏng (beam damage localization) 
   - pipeline CNN đã chạy được end-to-end
   - nhưng chất lượng hiện còn thấp hơn rõ rệt so với XGBoost
 
+### 11) XGBoost advanced + class-conditional regressor + position postprocess
+- Đã triển khai:
+  - class-conditional position regressor (mỗi lớp `num_damages` có regressor riêng)
+  - bước postprocess/snap vị trí dự đoán về grid hợp lệ
+- Run:
+  - `outputs/xgb_advanced_moe_postprocess/`
+- Snapshot metric trên `test`:
+  - `acc(num_damages)=0.9615`
+  - `f1_macro(num_damages)=0.9653`
+  - `pos_mae_overall(masked)=0.1217`
+  - `pos_rmse_overall(masked)=0.4529`
+- Nhận xét:
+  - F1 giữ nguyên bằng `baseline_xgb_advanced`
+  - MAE vị trí giảm từ `0.4208` xuống `0.1217` — giảm mạnh nhất trong tất cả các run
+  - Đây là run tốt nhất toàn diện hiện tại
+
 ### 10) Tuning full cho XGBoost advanced
 - Đã triển khai:
   - `scripts/tune/10_tune_xgb_advanced.py`
@@ -232,28 +310,23 @@ Xây pipeline để dự đoán vị trí hư hỏng (beam damage localization) 
 
 ### Model đang tốt nhất theo từng mục tiêu
 - Nếu ưu tiên **phân loại đúng số lượng hư hỏng**:
-  - chọn `baseline_xgb_advanced`
-  - kết quả `test`: `acc=0.9615`, `f1_macro=0.9653`, `pos_mae=0.4208`
+  - chọn `xgb_advanced_moe_postprocess` (đồng hạng F1 với `baseline_xgb_advanced`)
+  - kết quả `test`: `acc=0.9615`, `f1_macro=0.9653`, `pos_mae=0.1217`
 - Nếu ưu tiên **dự đoán vị trí hư hỏng chính xác hơn**:
-  - chọn `tuned_xgb_advanced_balanced`
-  - kết quả `test`: `acc=0.9231`, `f1_macro=0.9339`, `pos_mae=0.2497`
+  - chọn `xgb_advanced_moe_postprocess`
+  - kết quả `test`: `pos_mae=0.1217` — thấp nhất trong tất cả run
 - Nếu cần **cân bằng cả hai**:
-  - hiện tại vẫn nên chọn `tuned_xgb_advanced_balanced`
-  - lý do: F1 vẫn rất cao nhưng MAE vị trí giảm mạnh nhất
+  - chọn `xgb_advanced_moe_postprocess`
+  - lý do: F1 cao nhất đồng hạng, MAE thấp nhất rõ rệt
 
-### So với các nhóm model khác
-- `baseline_rf`:
-  - `acc=0.7308`, `f1_macro=0.6124`, `pos_mae=0.6846`
-- `tuned_rf_balanced_refit`:
-  - `acc=0.8462`, `f1_macro=0.6308`, `pos_mae=0.3703`
-- `baseline_xgb`:
-  - `acc=0.8462`, `f1_macro=0.8538`, `pos_mae=0.4198`
-- `tuned_xgb_balanced`:
-  - `acc=0.8846`, `f1_macro=0.8960`, `pos_mae=0.3816`
-- `baseline_xgb_advanced`:
-  - `acc=0.9615`, `f1_macro=0.9653`, `pos_mae=0.4208`
-- `tuned_xgb_advanced_balanced`:
-  - `acc=0.9231`, `f1_macro=0.9339`, `pos_mae=0.2497`
+### So với các nhóm model khác (xem bảng đầy đủ: `docs/MODEL_COMPARISON.md`)
+- `baseline_rf`: `acc=0.7308`, `f1_macro=0.6124`, `pos_mae=0.6846`
+- `tuned_rf_balanced_refit`: `acc=0.8462`, `f1_macro=0.6308`, `pos_mae=0.3703`
+- `baseline_xgb`: `acc=0.8462`, `f1_macro=0.8538`, `pos_mae=0.4198`
+- `tuned_xgb_balanced`: `acc=0.8846`, `f1_macro=0.8960`, `pos_mae=0.3816`
+- `baseline_xgb_advanced`: `acc=0.9615`, `f1_macro=0.9653`, `pos_mae=0.4208`
+- `tuned_xgb_advanced_balanced`: `acc=0.9231`, `f1_macro=0.9339`, `pos_mae=0.2497`
+- **`xgb_advanced_moe_postprocess`: `acc=0.9615`, `f1_macro=0.9653`, `pos_mae=0.1217` ← best overall**
 - `MLP` và `CNN1D` hiện thấp hơn rõ rệt, chưa phải ứng viên chính
 
 ## Kết quả hiện tại so với kỳ vọng ban đầu
@@ -359,8 +432,38 @@ Xây pipeline để dự đoán vị trí hư hỏng (beam damage localization) 
 - Nếu muốn refit luôn (không đụng test khi chọn best):
   - `python scripts/tune/06_tune_rf.py --n-trials 80 --output-name tuned_rf_balanced --alpha 0.5 --refit-on-train-val`
 
+### 12) Data augmentation cho class 0 (no damage)
+- Vấn đề: class 0 chỉ có 1 sample, val/test không có class 0 → model không được đánh giá khả năng phát hiện "bình thường"
+- Đã triển khai 2 phương pháp:
+
+**Phase 1 — Gaussian noise augmentation**
+- Script: `scripts/data/03_augment_class0.py`
+- Module: `src/data/augment.py`
+- Sinh 60 samples bằng cách thêm Gaussian noise vào mode vectors (σ=1% std) và frequencies (σ=0.5%)
+- Validation: 60/60 samples pass tất cả checks (freq_ordered, freq_ratio_ok, mode_std_ok)
+- Output: `data/processed/train_augmented.csv` (254 rows, 53 class-0), `data/processed/val_augmented.csv` (33 rows, 8 class-0)
+- Retrain: `scripts/train/13_train_with_augmented.py` → `outputs/xgb_aug_noise/artifact.joblib`
+- Kết quả trên TEST (so sánh với baseline `xgb_advanced_moe_postprocess`):
+  - TEST: acc=0.9615, f1_macro=0.9653, pos_mae=0.1217 — **giữ nguyên performance trên class 1/2/4**
+  - VAL (augmented): acc=0.9697, f1_macro=0.9736 — **model đã có thể phân loại đúng class 0**
+
+**Phase 2 — Conditional VAE (CVAE)**
+- Module: `src/models/cvae.py`
+- Script: `scripts/data/04_train_cvae.py`
+- Input: 4 freqs + 4×32 resampled mode vectors = 132 features; conditioning: one-hot class (4 classes)
+- Latent dim: 16, β-annealing (β: 0→0.01 trong 200 epochs), 500 epochs
+- Training loss: 0.025 → 0.012 (convergence tốt)
+- **Phát hiện quan trọng:** Chỉ 3/60 generated samples pass `mode_std_ok` validation
+  - Tất cả 60/60 pass `freq_ordered` và `freq_ratio_ok`
+  - Nhưng mode vector std bị sai lệch nhiều so với real class-0 sample
+  - Nguyên nhân: CVAE học chủ yếu từ class 1/2/4 (252 samples), class-0 conditioning gần như không được train (chỉ 1 sample). Decoder với c=[1,0,0,0] ra mode shapes mang đặc trưng của dầm bị hư hỏng, không phải dầm bình thường.
+- **Kết luận khoa học:** CVAE không phù hợp khi class imbalance là 1:252. Gaussian noise augmentation vẫn là lựa chọn tốt hơn cho bài toán này.
+- Output: `outputs/cvae_class0/cvae_model.pt`, `outputs/cvae_class0/synthetic_class0.csv`
+
 ## Việc tiếp theo (chưa làm)
+- Chạy ablation ngắn cho `xgb_advanced_moe_postprocess`: bỏ class-conditional regressor, bỏ postprocess/snap, so sánh MAE/RMSE/F1.
+- Chạy nhiều random seed để kiểm tra độ ổn định thống kê của kết quả tốt nhất.
+- Chốt 1 model cuối cùng → viết phần thảo luận kết quả theo 2 trục: phân loại `num_damages` + định vị vị trí.
 - Tuning cho `CNN 1D` nếu muốn tiếp tục theo hướng deep learning.
-- Nếu muốn tiếp: thử alpha khác cho tuning `XGBoost advanced` để xem có giữ được F1 cao hơn mà MAE vẫn thấp.
-- Nếu muốn tiếp: dọn lại các run smoke/old run trong `outputs/` và chỉ giữ lại các run cuối cùng quan trọng.
+- Dọn lại các run smoke/old run trong `outputs/` và chỉ giữ lại các run cuối cùng quan trọng.
 

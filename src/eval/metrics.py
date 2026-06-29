@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_squared_error
+from sklearn.metrics import accuracy_score, classification_report, f1_score, mean_absolute_error, mean_squared_error
 
 
 POSITION_COLS = ["damage_pos_1", "damage_pos_2", "damage_pos_3", "damage_pos_4"]
@@ -18,6 +18,7 @@ class DamageMetrics:
     pos_rmse_overall: float
     pos_mae_per_slot: dict[str, float]
     pos_rmse_per_slot: dict[str, float]
+    num_damages_per_class_report: dict
 
 
 def _masked_regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[float, float]:
@@ -60,6 +61,8 @@ def compute_damage_metrics(
         mae_per[col] = mae_i
         rmse_per[col] = rmse_i
 
+    per_class = classification_report(y_num_true, y_num_pred, output_dict=True, zero_division=0)
+
     return DamageMetrics(
         num_damages_accuracy=num_acc,
         num_damages_f1_macro=num_f1_macro,
@@ -67,5 +70,6 @@ def compute_damage_metrics(
         pos_rmse_overall=overall_rmse,
         pos_mae_per_slot=mae_per,
         pos_rmse_per_slot=rmse_per,
+        num_damages_per_class_report=per_class,
     )
 
